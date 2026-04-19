@@ -863,6 +863,30 @@ async function procesarArchivo(file) {
 
     if (rows.length === 0) { preview.innerHTML = `<div class="alert alert-error">El archivo está vacío.</div>`; return; }
 
+    // Convierte fecha de Excel (número o string) a dd/mm/aaaa
+    function parsearFecha(val) {
+      if (!val) return '';
+      // Si es número (fecha serial de Excel)
+      if (typeof val === 'number' || /^\d{5}$/.test(val.toString().trim())) {
+        const n = parseInt(val);
+        // Excel epoch: 1 enero 1900 = día 1 (con bug del año bisiesto 1900)
+        const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000);
+        const dd = String(d.getUTCDate()).padStart(2,'0');
+        const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+        const aaaa = d.getUTCFullYear();
+        return `${dd}/${mm}/${aaaa}`;
+      }
+      // Si ya es string, intentar normalizar
+      const s = val.toString().trim();
+      // Formato YYYY-MM-DD
+      const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+      // Formato DD/MM/YYYY o DD-MM-YYYY
+      const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if (dmy) return `${dmy[1].padStart(2,'0')}/${dmy[2].padStart(2,'0')}/${dmy[3]}`;
+      return s;
+    }
+
     // Normalizar columnas
     const filas = rows.map(r => {
       const keys = Object.keys(r).map(k => k.toLowerCase().replace(/\s+/g,'_'));
@@ -874,7 +898,7 @@ async function procesarArchivo(file) {
         cedula: (map.cedula || map.ci || map.documento || '').toString().trim(),
         rendimiento: parseFloat(map.nota_rendimiento || map.rendimiento || 0),
         conducta: parseFloat(map.nota_conducta || map.conducta || 0),
-        fecha: (map.fecha || map.date || '').toString().trim(),
+        fecha: parsearFecha(map.fecha || map.date || ''),
         grupo: (map.grupo || map.group || '').toString().trim()
       };
     }).filter(r => r.nombre && r.apellido && r.cedula);
