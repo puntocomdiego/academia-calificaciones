@@ -363,29 +363,54 @@
 <body>
 <div class="app" id="app"></div>
 
-<script>
-// ─── STORAGE HELPERS ───────────────────────────────────────────────
-const STORAGE_KEYS = {
-  alumnos: 'academia_alumnos',
-  notas: 'academia_notas',
-  confirmaciones: 'academia_confirmaciones'
+<script type="module">
+// ─── FIREBASE ──────────────────────────────────────────────────────
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAQ_iYksAV1kH6Qvqi2cmKkb-4oMcS1CZQ",
+  authDomain: "my-project-1542756666875.firebaseapp.com",
+  projectId: "my-project-1542756666875",
+  storageBucket: "my-project-1542756666875.firebasestorage.app",
+  messagingSenderId: "9767829028341",
+  appId: "1:9767829028341:web:e093176280a5d06b0f355c"
 };
 
-async function dbGet(key) {
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ─── FIREBASE HELPERS ──────────────────────────────────────────────
+async function dbGetAll(colName) {
   try {
-    const val = localStorage.getItem(key);
-    return val ? JSON.parse(val) : null;
-  } catch { return null; }
+    const snap = await getDocs(collection(db, colName));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) { console.error('dbGetAll error', e); return []; }
 }
-async function dbSet(key, val) {
+
+async function dbSaveDoc(colName, id, data) {
   try {
-    localStorage.setItem(key, JSON.stringify(val));
-  } catch(e) { console.error('Storage error', e); }
+    await setDoc(doc(db, colName, id), data);
+  } catch(e) { console.error('dbSaveDoc error', e); }
+}
+
+async function dbDeleteDoc(colName, id) {
+  try {
+    await deleteDoc(doc(db, colName, id));
+  } catch(e) { console.error('dbDeleteDoc error', e); }
+}
+
+async function dbDeleteWhere(colName, field, value) {
+  try {
+    const q = query(collection(db, colName), where(field, '==', value));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) await deleteDoc(d.ref);
+  } catch(e) { console.error('dbDeleteWhere error', e); }
 }
 
 // ─── STATE ─────────────────────────────────────────────────────────
 let state = {
-  view: 'loading',       // loading | login | docente | padre
+  view: 'loading',
   docente: false,
   alumnos: [],
   notas: [],
@@ -404,20 +429,15 @@ const CREDENCIALES = { usuario: 'docente', password: 'academia2025' };
 
 // ─── INIT ──────────────────────────────────────────────────────────
 async function init() {
-  // Chequear si es vista padre (URL con ?alumno=ID)
   const params = new URLSearchParams(window.location.search);
   const alumnoId = params.get('alumno');
 
-  const alumnos = await dbGet(STORAGE_KEYS.alumnos) || [];
-  const notas = await dbGet(STORAGE_KEYS.notas) || [];
-  const confirmaciones = await dbGet(STORAGE_KEYS.confirmaciones) || [];
-
-  state.alumnos = alumnos;
-  state.notas = notas;
-  state.confirmaciones = confirmaciones;
+  state.alumnos = await dbGetAll('alumnos');
+  state.notas = await dbGetAll('notas');
+  state.confirmaciones = await dbGetAll('confirmaciones');
 
   if (alumnoId) {
-    const alumno = alumnos.find(a => a.id === alumnoId);
+    const alumno = state.alumnos.find(a => a.id === alumnoId);
     state.padreAlumno = alumno || null;
     state.view = 'padre';
   } else {
@@ -770,12 +790,13 @@ function bindDocente() {
   document.querySelectorAll('[data-action="eliminar-alumno"]').forEach(b => {
     b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar este alumno y todas sus notas?')) return;
-      state.alumnos = state.alumnos.filter(a => a.id !== b.dataset.id);
-      state.notas = state.notas.filter(n => n.alumnoId !== b.dataset.id);
-      state.confirmaciones = state.confirmaciones.filter(c => c.alumnoId !== b.dataset.id);
-      await dbSet(STORAGE_KEYS.alumnos, state.alumnos);
-      await dbSet(STORAGE_KEYS.notas, state.notas);
-      await dbSet(STORAGE_KEYS.confirmaciones, state.confirmaciones);
+      const aid = b.dataset.id;
+      await dbDeleteDoc('alumnos', aid);
+      await dbDeleteWhere('notas', 'alumnoId', aid);
+      await dbDeleteWhere('confirmaciones', 'alumnoId', aid);
+      state.alumnos = state.alumnos.filter(a => a.id !== aid);
+      state.notas = state.notas.filter(n => n.alumnoId !== aid);
+      state.confirmaciones = state.confirmaciones.filter(c => c.alumnoId !== aid);
       state.success = 'Alumno eliminado.'; render(); autoHideSuccess();
     });
   });
@@ -783,11 +804,9 @@ function bindDocente() {
   document.querySelectorAll('[data-action="eliminar-nota"]').forEach(b => {
     b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar esta nota?')) return;
+      await dbDeleteDoc('notas', b.dataset.notaid);
       state.notas = state.notas.filter(n => n.id !== b.dataset.notaid);
-      await dbSet(STORAGE_KEYS.notas, state.notas);
       state.success = 'Nota eliminada.';
-      // Reabrir modal
-      const a = state._verNotasAlumno;
       state.modalAbierto = 'verNotas'; render(); autoHideSuccess();
     });
   });
@@ -813,8 +832,9 @@ function bindModal() {
       alert('Completá todos los campos obligatorios.'); return;
     }
     const id = 'al_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
-    state.alumnos.push({ id, nombre, apellido, cedula, correoPadre, grupo });
-    await dbSet(STORAGE_KEYS.alumnos, state.alumnos);
+    const alumnoData = { id, nombre, apellido, cedula, correoPadre, grupo };
+    await dbSaveDoc('alumnos', id, alumnoData);
+    state.alumnos.push(alumnoData);
     state.success = `Alumno ${nombre} ${apellido} agregado correctamente.`;
     closeModal(); autoHideSuccess();
   });
@@ -953,10 +973,10 @@ async function procesarArchivo(file) {
           fecha: f.fecha,
           grupo: f.grupo || alumno.grupo
         };
+        await dbSaveDoc('notas', nota.id, nota);
         state.notas.push(nota);
         nuevasNotas++;
       }
-      await dbSet(STORAGE_KEYS.notas, state.notas);
       state.success = `✓ Se importaron ${nuevasNotas} notas correctamente.`;
       preview.innerHTML = '';
       render(); autoHideSuccess();
@@ -1075,9 +1095,10 @@ function bindPadre() {
       comentario,
       fecha: new Date().toLocaleDateString('es-UY', { day:'2-digit', month:'2-digit', year:'numeric' })
     };
+    await dbDeleteWhere('confirmaciones', 'alumnoId', alumno.id);
+    await dbSaveDoc('confirmaciones', conf.id, conf);
     state.confirmaciones = state.confirmaciones.filter(c => c.alumnoId !== alumno.id);
     state.confirmaciones.push(conf);
-    await dbSet(STORAGE_KEYS.confirmaciones, state.confirmaciones);
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
@@ -1088,4 +1109,3 @@ init();
 </script>
 </body>
 </html>
-```
